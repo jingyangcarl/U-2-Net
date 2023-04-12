@@ -10,6 +10,7 @@ import matplotlib.pyplot as plt
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 from PIL import Image
+from tqdm import tqdm
 
 #==========================dataset load==========================
 class RescaleT(object):
@@ -220,6 +221,31 @@ class ToTensorLab(object):
 
 		return {'imidx':torch.from_numpy(imidx), 'image': torch.from_numpy(tmpImg), 'label': torch.from_numpy(tmpLbl)}
 
+class SpecularNormalNormalize(object):
+
+	def __init__(self, half=False):
+		self.half = half
+ 
+	def __call__(self,sample):
+		imidx, image, label = sample['imidx'], sample['image'], sample['label']
+  
+		if self.half:
+			image = image[::2,::2,:]
+			label = label[::2,::2,:]
+   
+		image = np.clip(image, -1, 1) / 2 + 0.5
+  
+		# normalize with resnet weights
+		# image[:,:,0] = (image[:,:,0]-0.485)/0.229
+		# image[:,:,1] = (image[:,:,1]-0.456)/0.224
+		# image[:,:,2] = (image[:,:,2]-0.406)/0.225
+  
+		image = image.transpose((2, 0, 1))
+		label = label.transpose((2, 0, 1))
+		imidx, image, label = torch.from_numpy(imidx), torch.from_numpy(image.copy()), torch.from_numpy(label.copy())
+  
+		return {'imidx':imidx,'image':image, 'label':label}
+
 class SalObjDataset(Dataset):
 	def __init__(self,img_name_list,lbl_name_list,transform=None):
 		# self.root_dir = root_dir
@@ -245,6 +271,52 @@ class SalObjDataset(Dataset):
 			label_3 = np.zeros(image.shape)
 		else:
 			label_3 = io.imread(self.label_name_list[idx])
+
+		label = np.zeros(label_3.shape[0:2])
+		if(3==len(label_3.shape)):
+			label = label_3[:,:,0]
+		elif(2==len(label_3.shape)):
+			label = label_3
+
+		if(3==len(image.shape) and 2==len(label.shape)):
+			label = label[:,:,np.newaxis]
+		elif(2==len(image.shape) and 2==len(label.shape)):
+			image = image[:,:,np.newaxis]
+			label = label[:,:,np.newaxis]
+
+		sample = {'imidx':imidx, 'image':image, 'label':label}
+
+		if self.transform:
+			sample = self.transform(sample)
+
+		return sample
+
+class LightStageDataset(Dataset):
+	def __init__(self,img_name_list,lbl_name_list,transform=None):
+		self.image_name_list = img_name_list
+		self.label_name_list = lbl_name_list
+		self.transform = transform
+  
+		# load
+		self.images = [io.imread(i) for i in tqdm(self.image_name_list, dynamic_ncols=True, desc='loading normals')]
+		self.labels = [io.imread(i) for i in tqdm(self.label_name_list, dynamic_ncols=True, desc='loading labels')]
+		
+
+	def __len__(self):
+		return len(self.image_name_list) * 100
+
+	def __getitem__(self,idx):
+
+		idx = idx % len(self.image_name_list)
+		imidx = np.array([idx])
+		# image = io.imread(self.image_name_list[idx])
+		image = self.images[idx]
+
+		if(0==len(self.label_name_list)):
+			label_3 = np.zeros(image.shape)
+		else:
+			# label_3 = io.imread(self.label_name_list[idx])
+			label_3 = self.labels[idx]
 
 		label = np.zeros(label_3.shape[0:2])
 		if(3==len(label_3.shape)):
