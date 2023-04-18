@@ -122,17 +122,17 @@ for epoch in range(0, epoch_num):
         ite_num = ite_num + 1
         ite_num4val = ite_num4val + 1
 
-        inputs, labels = data['image'], data['label']
+        inputs, albedos = data['image'], data['label']
 
         inputs = inputs.type(torch.FloatTensor)
-        labels = labels.type(torch.FloatTensor)
+        albedos = albedos.type(torch.FloatTensor)
 
         # wrap them in Variable
         if torch.cuda.is_available():
-            inputs_v, labels_v = Variable(inputs.cuda(), requires_grad=False), Variable(labels.cuda(),
+            inputs_v, labels_v = Variable(inputs.cuda(), requires_grad=False), Variable(albedos.cuda(),
                                                                                         requires_grad=False)
         else:
-            inputs_v, labels_v = Variable(inputs, requires_grad=False), Variable(labels, requires_grad=False)
+            inputs_v, labels_v = Variable(inputs, requires_grad=False), Variable(albedos, requires_grad=False)
 
         # y zero the parameter gradients
         optimizer.zero_grad()

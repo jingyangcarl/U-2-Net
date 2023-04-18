@@ -11,6 +11,7 @@ import torch.optim as optim
 import torchvision.transforms as standard_transforms
 from skimage import io, transform
 from PIL import Image
+import imageio
 
 import numpy as np
 import glob
@@ -20,31 +21,41 @@ from data_loader import *
 from model import *
 
 from tqdm import tqdm
-
+from transformers import CLIPTextModel, AutoTokenizer
 # ------- 1. define loss function --------
 
+mse_loss = nn.MSELoss(size_average=True)
 bce_loss = nn.BCELoss(size_average=True)
 
-def muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, labels_v):
+def muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, albedos, speculs):
 
-	loss0 = bce_loss(d0,labels_v)
-	loss1 = bce_loss(d1,labels_v)
-	loss2 = bce_loss(d2,labels_v)
-	loss3 = bce_loss(d3,labels_v)
-	loss4 = bce_loss(d4,labels_v)
-	loss5 = bce_loss(d5,labels_v)
-	loss6 = bce_loss(d6,labels_v)
+    loss0 = mse_loss(d0[:,:3,...],albedos)
+    loss1 = mse_loss(d1[:,:3,...],albedos)
+    loss2 = mse_loss(d2[:,:3,...],albedos)
+    loss3 = mse_loss(d3[:,:3,...],albedos)
+    loss4 = mse_loss(d4[:,:3,...],albedos)
+    loss5 = mse_loss(d5[:,:3,...],albedos)
+    loss6 = mse_loss(d6[:,:3,...],albedos)
+ 
+    loss0_ = bce_loss(d0[:,-1:,...],speculs)
+    loss1_ = bce_loss(d1[:,-1:,...],speculs)
+    loss2_ = bce_loss(d2[:,-1:,...],speculs)
+    loss3_ = bce_loss(d3[:,-1:,...],speculs)
+    loss4_ = bce_loss(d4[:,-1:,...],speculs)
+    loss5_ = bce_loss(d5[:,-1:,...],speculs)
+    loss6_ = bce_loss(d6[:,-1:,...],speculs)
 
-	loss = loss0 + loss1 + loss2 + loss3 + loss4 + loss5 + loss6
+    loss = loss0 + loss1 + loss2 + loss3 + loss4 + loss5 + loss6
+    loss_ = loss0_ + loss1_ + loss2_ + loss3_ + loss4_ + loss5_ + loss6_
 
-	return loss0, loss, {
-        'l0': loss0,
-        'l1': loss1,
-        'l2': loss2,
-        'l3': loss3,
-        'l4': loss4,
-        'l5': loss5,
-        'l6': loss6,
+    return loss0, loss+loss_, {
+        'l0': loss0+loss0_,
+        'l1': loss1+loss1_,
+        'l2': loss2+loss2_,
+        'l3': loss3+loss3_,
+        'l4': loss4+loss4_,
+        'l5': loss5+loss5_,
+        'l6': loss6+loss6_,
     }
 
 # normalize the predicted SOD probability map
@@ -56,37 +67,19 @@ def normPRED(d):
 
     return dn
 
-def save_output(image_name, pred, d_dir, step):
 
-    predict = pred
-    predict = predict.squeeze()
-    predict_np = predict.cpu().data.numpy()
-
-    im = Image.fromarray(predict_np*255).convert('RGB')
-    img_name = image_name.split(os.sep)[-1]
-    # image = io.imread(image_name)
-    # imo = im.resize((image.shape[1],image.shape[0]),resample=Image.BILINEAR)
-
-    aaa = img_name.split(".")
-    bbb = aaa[0:-1]
-    imidx = bbb[0]
-    for i in range(1,len(bbb)):
-        imidx = imidx + "." + bbb[i]
-
-    save_path = os.path.join(d_dir, f'{step}', f'{imidx}.png')
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    im.save(save_path)
 
 # ------- 2. set the directory of training dataset --------
 
-expname = 'test_pine'
+expname = 'test_models_28_normal2albedospec_masked_text_addalllayers_Linear_MSE'
+# expname = 'debug'
 model_name = 'u2net' #'u2netp'
 
-data_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/pine_static/'
-tra_image_dir = os.path.join('normal')
-tra_label_dir = os.path.join('specular')
-image_ext = 'exr'
-label_ext = 'exr'
+# data_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/*/'
+train_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0/models_env_0/brdf/*/'
+tra_normal_dir = os.path.join('normal')
+tra_albedo_dir = os.path.join('albedo')
+tra_specul_dir = os.path.join('specular')
 
 exp_dir = os.path.join(os.getcwd(), 'logs', expname)
 os.makedirs(exp_dir, exist_ok=True)
@@ -97,47 +90,79 @@ batch_size_val = 1
 train_num = 0
 val_num = 0
 
-tra_img_name_list = glob.glob(os.path.join(data_dir, tra_image_dir, f'*.{image_ext}'))
-tra_lbl_name_list = glob.glob(os.path.join(data_dir, tra_label_dir, f'*.{image_ext}'))
-# test_img_name_list = glob.glob(os.path.join(os.getcwd(), 'test_data', 'test_images', f'*'))
-test_img_name_list = tra_img_name_list
+# get all abs paths
+tra_normal_paths = glob.glob(os.path.join(train_dir, tra_normal_dir, '*.exr'))
+tra_albedo_paths = glob.glob(os.path.join(train_dir, tra_albedo_dir, '*.exr'))
+tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
+# filter by views
+getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
+tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
+# test
+test_normal_paths = tra_normal_paths
+test_tokens = tra_labels
+
+# tokenize text description
+tokenizer = AutoTokenizer.from_pretrained(
+    'runwayml/stable-diffusion-v1-5',
+    subfolder="tokenizer",
+    revision=None,
+    use_fast=False,
+)
+tra_tokens = tokenizer(
+    tra_labels, 
+    max_length=tokenizer.model_max_length, 
+    padding="max_length", 
+    truncation=True, 
+    return_tensors="pt"
+)['input_ids'].numpy()
 
 print("---")
-print("train images: ", len(tra_img_name_list))
-print("train labels: ", len(tra_lbl_name_list))
+print("train images: ", len(tra_normal_paths))
+print("train labels: ", len(tra_albedo_paths))
 print("---")
 
 salobj_dataset = LightStageDataset(
-    img_name_list=tra_img_name_list,
-    lbl_name_list=tra_lbl_name_list,
+    normal_paths=tra_normal_paths,
+    albedo_paths=tra_albedo_paths,
+    specul_paths=tra_specul_paths,
+    tokens = tra_tokens,
     transform=transforms.Compose([
-        # RescaleT(320),
-        RandomCrop(288),
-        SpecularNormalNormalize(),
-        # ToTensorLab(flag=0)
+        TextureRandomCrop(288),
+        TextureNormalize(),
     ]))
-salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuffle=True, num_workers=16)
+salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuffle=True, num_workers=3)
 
+28 * 8
 test_salobj_dataset = LightStageDataset(
-    img_name_list = tra_img_name_list,
-    lbl_name_list = [],
+    normal_paths = tra_normal_paths[::8],
+    albedo_paths = [],
+    specul_paths= [],
+    tokens = tra_tokens[::8],
     transform=transforms.Compose([
-        # RescaleT(320),
-        # RandomCrop(288),
-        SpecularNormalNormalize(True),
-        # ToTensorLab(flag=0)
+        TextureNormalize(half=False),
     ]))
-test_salobj_dataloader = DataLoader(test_salobj_dataset, batch_size=1, shuffle=False, num_workers=16)
+test_salobj_dataloader = DataLoader(test_salobj_dataset, batch_size=1, shuffle=False, num_workers=3)
 
 # ------- 3. define model --------
 # define the net
 if(model_name=='u2net'):
-    net = U2NET(3, 1)
+    net = U2NET(3,4)
 elif(model_name=='u2netp'):
     net = U2NETP(3,1)
 
 if torch.cuda.is_available():
     net.cuda()
+
+text_encoder = CLIPTextModel.from_pretrained(
+    'runwayml/stable-diffusion-v1-5', 
+    subfolder="text_encoder", 
+    revision=None
+)
+text_encoder.requires_grad_(False)
+text_encoder.cuda()
 
 # ------- 4. define optimizer --------
 print("---define optimizer...")
@@ -150,7 +175,7 @@ running_loss = 0.0
 running_tar_loss = 0.0
 ite_num4val = 0
 save_frq = 20000 # save the model every 2000 iterations
-val_frq = 1000
+val_frq = 2000
 
 for epoch in range(0, epoch_num):
     net.train()
@@ -160,24 +185,30 @@ for epoch in range(0, epoch_num):
         ite_num = ite_num + 1
         ite_num4val = ite_num4val + 1
 
-        inputs, labels = data['image'], data['label']
+        normals, albedos, speculs, tokens = data['normal'], data['albedo'], data['specul'], data['token']
 
-        inputs = inputs.type(torch.FloatTensor)
-        labels = labels.type(torch.FloatTensor)
+        normals = normals.type(torch.FloatTensor)
+        albedos = albedos.type(torch.FloatTensor)
+        speculs = speculs.type(torch.FloatTensor)
 
         # wrap them in Variable
         if torch.cuda.is_available():
-            inputs_v, labels_v = Variable(inputs.cuda(), requires_grad=False), Variable(labels.cuda(),
-                                                                                        requires_grad=False)
+            normals = Variable(normals.cuda(), requires_grad=False)
+            albedos = Variable(albedos.cuda(), requires_grad=False)
+            speculs = Variable(speculs.cuda(), requires_grad=False)
+            tokens = Variable(tokens.cuda(), requires_grad=False)
         else:
-            inputs_v, labels_v = Variable(inputs, requires_grad=False), Variable(labels, requires_grad=False)
+            normals = Variable(normals, requires_grad=False)
+            albedos = Variable(albedos, requires_grad=False)
 
         # y zero the parameter gradients
         optimizer.zero_grad()
+        
+        tokens_emb = text_encoder(tokens)[0]
 
         # forward + backward + optimize
-        d0, d1, d2, d3, d4, d5, d6 = net(inputs_v)
-        loss2, loss, descs = muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, labels_v)
+        d0, d1, d2, d3, d4, d5, d6 = net(normals, tokens_emb)
+        loss2, loss, descs = muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, albedos, speculs)
 
         loss.backward()
         optimizer.step()
@@ -195,28 +226,34 @@ for epoch in range(0, epoch_num):
             # evaluate model
             net.eval()
             with torch.no_grad():
-                for i_test, data_test in enumerate(test_salobj_dataloader):
-                    if i_test >= 3: continue
-                    print("inferencing:",test_img_name_list[i_test].split(os.sep)[-1])
+                for i_test, data_test in enumerate(tqdm(test_salobj_dataloader, desc='testing', dynamic_ncols=True)):
+                    if i_test >= len(tra_normal_paths): break
 
-                    inputs_test = data_test['image']
+                    inputs_test, tokens_test = data_test['normal'], data_test['token']
                     inputs_test = inputs_test.type(torch.FloatTensor)
 
                     if torch.cuda.is_available():
                         inputs_test = Variable(inputs_test.cuda())
+                        tokens_test = Variable(tokens_test.cuda())
                     else:
                         inputs_test = Variable(inputs_test)
+                        
+                    tokens_emb_test = text_encoder(tokens_test)[0]
 
-                    d1,d2,d3,d4,d5,d6,d7= net(inputs_test)
+                    d1,d2,d3,d4,d5,d6,d7= net(inputs_test, tokens_emb_test)
 
                     # normalization
-                    pred = d1[:,0,:,:]
+                    pred = d1[0,...] # batch size is 1
                     pred = normPRED(pred)
+                    pred = pred.cpu().data.numpy().transpose((1, 2, 0))
                     
                     # save results to test_results folder
-                    prediction_dir = os.path.join(exp_dir, 'val') + os.sep
-                    os.makedirs(prediction_dir, exist_ok=True)
-                    save_output(test_img_name_list[i_test], pred, prediction_dir, ite_num)
+                    obj, _, cam = os.path.splitext(test_normal_paths[i_test])[0].split('/')[-3:]
+                    save_path_albedo = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_a.png')
+                    save_path_specul = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_s.png')
+                    os.makedirs(os.path.dirname(save_path_albedo), exist_ok=True)
+                    imageio.imwrite(save_path_albedo, (pred[...,:3] * 255.).astype(np.uint8))
+                    imageio.imwrite(save_path_specul, (pred[...,-1] * 255.).astype(np.uint8))
 
             # back to train
             net.train()

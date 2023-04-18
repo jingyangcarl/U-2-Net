@@ -221,30 +221,6 @@ class ToTensorLab(object):
 
 		return {'imidx':torch.from_numpy(imidx), 'image': torch.from_numpy(tmpImg), 'label': torch.from_numpy(tmpLbl)}
 
-class SpecularNormalNormalize(object):
-
-	def __init__(self, half=False):
-		self.half = half
- 
-	def __call__(self,sample):
-		imidx, image, label = sample['imidx'], sample['image'], sample['label']
-  
-		if self.half:
-			image = image[::2,::2,:]
-			label = label[::2,::2,:]
-   
-		image = np.clip(image, -1, 1) / 2 + 0.5
-  
-		# normalize with resnet weights
-		# image[:,:,0] = (image[:,:,0]-0.485)/0.229
-		# image[:,:,1] = (image[:,:,1]-0.456)/0.224
-		# image[:,:,2] = (image[:,:,2]-0.406)/0.225
-  
-		image = image.transpose((2, 0, 1))
-		label = label.transpose((2, 0, 1))
-		imidx, image, label = torch.from_numpy(imidx), torch.from_numpy(image.copy()), torch.from_numpy(label.copy())
-  
-		return {'imidx':imidx,'image':image, 'label':label}
 
 class SalObjDataset(Dataset):
 	def __init__(self,img_name_list,lbl_name_list,transform=None):
@@ -291,46 +267,103 @@ class SalObjDataset(Dataset):
 
 		return sample
 
+class TextureRandomCrop(object):
+    
+	def __init__(self,output_size):
+		assert isinstance(output_size, (int, tuple))
+		if isinstance(output_size, int):
+			self.output_size = (output_size, output_size)
+		else:
+			assert len(output_size) == 2
+			self.output_size = output_size
+   
+	def __call__(self,sample):
+		imidx, normal, albedo, specul, token = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token']
+
+		if random.random() >= 0.5:
+			normal = normal[::-1]
+			albedo = albedo[::-1]
+			specul = specul[::-1]
+
+		h, w = normal.shape[:2]
+		new_h, new_w = self.output_size
+
+		top = np.random.randint(0, h - new_h)
+		left = np.random.randint(0, w - new_w)
+
+		normal = normal[top: top + new_h, left: left + new_w]
+		albedo = albedo[top: top + new_h, left: left + new_w]
+		specul = specul[top: top + new_h, left: left + new_w]
+
+		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token}
+
+class TextureNormalize(object):
+
+	def __init__(self, half=False):
+		self.half = half
+ 
+	def __call__(self,sample):
+		imidx, normal, albedo, specul, token = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token']
+  
+		if self.half:
+			normal = normal[::2,::2,:]
+			albedo = albedo[::2,::2,:]
+   
+		normal = np.clip(normal, -1, 1) / 2 + 0.5
+		albedo = np.clip(albedo, 0, 1)
+		specul = np.clip(specul, 0, 1)
+  
+		# normalize with resnet weights
+		# image[:,:,0] = (image[:,:,0]-0.485)/0.229
+		# image[:,:,1] = (image[:,:,1]-0.456)/0.224
+		# image[:,:,2] = (image[:,:,2]-0.406)/0.225
+  
+		normal = normal.transpose((2, 0, 1))
+		albedo = albedo.transpose((2, 0, 1))
+		specul = specul.transpose((2, 0, 1))
+		imidx, normal, albedo, specul, token = torch.from_numpy(imidx), torch.from_numpy(normal.copy()), torch.from_numpy(albedo.copy()), torch.from_numpy(specul.copy()), torch.from_numpy(token.copy())
+  
+		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token}
+
 class LightStageDataset(Dataset):
-	def __init__(self,img_name_list,lbl_name_list,transform=None):
-		self.image_name_list = img_name_list
-		self.label_name_list = lbl_name_list
+	def __init__(self,normal_paths,albedo_paths, specul_paths, tokens,transform=None):
+		self.normal_paths = normal_paths
+		self.albedo_paths = albedo_paths
+		self.specul_paths = specul_paths
+		self.tokens = tokens
 		self.transform = transform
   
 		# load
-		self.images = [io.imread(i) for i in tqdm(self.image_name_list, dynamic_ncols=True, desc='loading normals')]
-		self.labels = [io.imread(i) for i in tqdm(self.label_name_list, dynamic_ncols=True, desc='loading labels')]
-		
+		masks = [(io.imread(i.replace('albedo', 'mask').replace('exr', 'png'))/255.).astype(np.float16) for i in tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading mask')]
+		self.normals = [io.imread(p).astype(np.float16) for p in tqdm(self.normal_paths, dynamic_ncols=True, desc='loading normals')]
+		self.albedos = [io.imread(p).astype(np.float16) * masks[i][...,None] for i, p in enumerate(tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading albedos'))]
+		self.speculs = [io.imread(p).astype(np.float16) * masks[i] for i, p in enumerate(tqdm(self.specul_paths, dynamic_ncols=True, desc='loading speculars'))]
+		print('loading completed')
 
 	def __len__(self):
-		return len(self.image_name_list) * 100
+		return len(self.normal_paths) * 100
 
 	def __getitem__(self,idx):
 
-		idx = idx % len(self.image_name_list)
+		idx = idx % len(self.normal_paths)
 		imidx = np.array([idx])
-		# image = io.imread(self.image_name_list[idx])
-		image = self.images[idx]
-
-		if(0==len(self.label_name_list)):
-			label_3 = np.zeros(image.shape)
+		normal = self.normals[idx]
+		token = self.tokens[idx]
+  
+		if self.albedos: 
+			albedo = self.albedos[idx]
 		else:
-			# label_3 = io.imread(self.label_name_list[idx])
-			label_3 = self.labels[idx]
+			albedo = np.zeros_like(normal)
+   
+		if self.speculs: 
+			specul = self.speculs[idx]
+		else:
+			specul = np.zeros_like(normal)
+   
+		albedo = albedo[..., None] if albedo.ndim == 2 else albedo
+		specul = specul[..., None] if specul.ndim == 2 else specul
 
-		label = np.zeros(label_3.shape[0:2])
-		if(3==len(label_3.shape)):
-			label = label_3[:,:,0]
-		elif(2==len(label_3.shape)):
-			label = label_3
-
-		if(3==len(image.shape) and 2==len(label.shape)):
-			label = label[:,:,np.newaxis]
-		elif(2==len(image.shape) and 2==len(label.shape)):
-			image = image[:,:,np.newaxis]
-			label = label[:,:,np.newaxis]
-
-		sample = {'imidx':imidx, 'image':image, 'label':label}
+		sample = {'imidx':imidx, 'normal':normal, 'albedo':albedo, 'specul':specul, 'token':token}
 
 		if self.transform:
 			sample = self.transform(sample)
