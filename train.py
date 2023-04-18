@@ -96,9 +96,9 @@ tra_albedo_paths = glob.glob(os.path.join(train_dir, tra_albedo_dir, '*.exr'))
 tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
 # filter by views
 getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
-tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
-tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
-tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)] # filter cams
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
 tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
 # test
 test_normal_paths = tra_normal_paths
@@ -135,12 +135,11 @@ salobj_dataset = LightStageDataset(
     ]))
 salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuffle=True, num_workers=3)
 
-28 * 8
 test_salobj_dataset = LightStageDataset(
-    normal_paths = tra_normal_paths[::8],
+    normal_paths = tra_normal_paths[::7],
     albedo_paths = [],
     specul_paths= [],
-    tokens = tra_tokens[::8],
+    tokens = tra_tokens[::7],
     transform=transforms.Compose([
         TextureNormalize(half=False),
     ]))
@@ -217,7 +216,7 @@ for epoch in range(0, epoch_num):
         running_loss += loss.data.item()
         running_tar_loss += loss2.data.item()
 
-        pbar.set_description(f'[eposh: {epoch + 1}/{epoch_num}, batch: {(i + 1) * batch_size_train}/{len(salobj_dataset)}, ite: {ite_num}] ' + 
+        pbar.set_description(f'[epc: {epoch + 1}/{epoch_num}, bch: {(i + 1) * batch_size_train}/{len(salobj_dataset)}, ite: {ite_num}] ' + 
                              f'loss: {running_loss / ite_num4val:.4f}, tar: {running_tar_loss / ite_num4val:.4f} ' + 
                              f'l0: {descs["l0"]:.4f}, l1: {descs["l1"]:.4f}, l2: {descs["l2"]:.4f}, l3: {descs["l3"]:.4f}, l4: {descs["l4"]:.4f}, l5: {descs["l5"]:.4f}, l6: {descs["l6"]:.4f}')
 
@@ -227,9 +226,8 @@ for epoch in range(0, epoch_num):
             net.eval()
             with torch.no_grad():
                 for i_test, data_test in enumerate(tqdm(test_salobj_dataloader, desc='testing', dynamic_ncols=True)):
-                    if i_test >= len(tra_normal_paths): break
 
-                    inputs_test, tokens_test = data_test['normal'], data_test['token']
+                    inputs_test, tokens_test, npath_test = data_test['normal'], data_test['token'], data_test['npath']
                     inputs_test = inputs_test.type(torch.FloatTensor)
 
                     if torch.cuda.is_available():
@@ -248,7 +246,7 @@ for epoch in range(0, epoch_num):
                     pred = pred.cpu().data.numpy().transpose((1, 2, 0))
                     
                     # save results to test_results folder
-                    obj, _, cam = os.path.splitext(test_normal_paths[i_test])[0].split('/')[-3:]
+                    obj, _, cam = os.path.splitext(npath_test[0])[0].split('/')[-3:]
                     save_path_albedo = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_a.png')
                     save_path_specul = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_s.png')
                     os.makedirs(os.path.dirname(save_path_albedo), exist_ok=True)

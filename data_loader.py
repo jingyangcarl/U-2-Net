@@ -278,7 +278,7 @@ class TextureRandomCrop(object):
 			self.output_size = output_size
    
 	def __call__(self,sample):
-		imidx, normal, albedo, specul, token = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token']
+		imidx, normal, albedo, specul, token, npath = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token'], sample['npath']
 
 		if random.random() >= 0.5:
 			normal = normal[::-1]
@@ -295,7 +295,7 @@ class TextureRandomCrop(object):
 		albedo = albedo[top: top + new_h, left: left + new_w]
 		specul = specul[top: top + new_h, left: left + new_w]
 
-		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token}
+		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token, 'npath':npath}
 
 class TextureNormalize(object):
 
@@ -303,7 +303,7 @@ class TextureNormalize(object):
 		self.half = half
  
 	def __call__(self,sample):
-		imidx, normal, albedo, specul, token = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token']
+		imidx, normal, albedo, specul, token, npath = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token'], sample['npath']
   
 		if self.half:
 			normal = normal[::2,::2,:]
@@ -323,7 +323,7 @@ class TextureNormalize(object):
 		specul = specul.transpose((2, 0, 1))
 		imidx, normal, albedo, specul, token = torch.from_numpy(imidx), torch.from_numpy(normal.copy()), torch.from_numpy(albedo.copy()), torch.from_numpy(specul.copy()), torch.from_numpy(token.copy())
   
-		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token}
+		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token, 'npath':npath}
 
 class LightStageDataset(Dataset):
 	def __init__(self,normal_paths,albedo_paths, specul_paths, tokens,transform=None):
@@ -341,7 +341,7 @@ class LightStageDataset(Dataset):
 		print('loading completed')
 
 	def __len__(self):
-		return len(self.normal_paths) * 100
+		return len(self.normal_paths) * (100 if self.albedo_paths else 1) # test set has empty albedo
 
 	def __getitem__(self,idx):
 
@@ -349,6 +349,7 @@ class LightStageDataset(Dataset):
 		imidx = np.array([idx])
 		normal = self.normals[idx]
 		token = self.tokens[idx]
+		npath = self.normal_paths[idx]
   
 		if self.albedos: 
 			albedo = self.albedos[idx]
@@ -363,7 +364,7 @@ class LightStageDataset(Dataset):
 		albedo = albedo[..., None] if albedo.ndim == 2 else albedo
 		specul = specul[..., None] if specul.ndim == 2 else specul
 
-		sample = {'imidx':imidx, 'normal':normal, 'albedo':albedo, 'specul':specul, 'token':token}
+		sample = {'imidx':imidx, 'normal':normal, 'albedo':albedo, 'specul':specul, 'token':token, 'npath':npath}
 
 		if self.transform:
 			sample = self.transform(sample)
