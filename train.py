@@ -12,6 +12,7 @@ import torchvision.transforms as standard_transforms
 from skimage import io, transform
 from PIL import Image
 import imageio
+imageio.plugins.freeimage.download()
 
 import numpy as np
 import glob
@@ -76,16 +77,17 @@ expname = 'test_models_28_normal2albedospec_masked_text_addalllayers_Linear_MSE'
 model_name = 'u2net' #'u2netp'
 
 # data_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/*/'
-train_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0/models_env_0/brdf/*/'
+train_dir = '/home/jyang/projects/U-2-Net/data/v0/models_env_0/brdf/*/'
 tra_normal_dir = os.path.join('normal')
 tra_albedo_dir = os.path.join('albedo')
 tra_specul_dir = os.path.join('specular')
 
 exp_dir = os.path.join(os.getcwd(), 'logs', expname)
 os.makedirs(exp_dir, exist_ok=True)
+ngpus = torch.cuda.device_count()
 
 epoch_num = 100000
-batch_size_train = 16
+batch_size_train = 16*ngpus
 batch_size_val = 1
 train_num = 0
 val_num = 0
@@ -152,16 +154,21 @@ if(model_name=='u2net'):
 elif(model_name=='u2netp'):
     net = U2NETP(3,1)
 
-if torch.cuda.is_available():
-    net.cuda()
-
 text_encoder = CLIPTextModel.from_pretrained(
     'runwayml/stable-diffusion-v1-5', 
     subfolder="text_encoder", 
     revision=None
 )
 text_encoder.requires_grad_(False)
-text_encoder.cuda()
+
+if torch.cuda.is_available():
+    net.cuda()
+    text_encoder.cuda()
+    
+    # https://discuss.pytorch.org/t/do-dataparallel-and-distributeddataparallel-affect-the-batch-size-and-gpu-memory-consumption/97194
+    net = nn.DataParallel(net, device_ids=list(range(ngpus)), dim=0)
+    text_encoder = nn.DataParallel(text_encoder, device_ids=list(range(ngpus)), dim=0)
+    
 
 # ------- 4. define optimizer --------
 print("---define optimizer...")
