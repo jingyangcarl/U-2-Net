@@ -98,9 +98,9 @@ tra_albedo_paths = glob.glob(os.path.join(train_dir, tra_albedo_dir, '*.exr'))
 tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
 # filter by views
 getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
-tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
-tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
-tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
 tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
 # test
 test_normal_paths = tra_normal_paths
@@ -154,20 +154,11 @@ if(model_name=='u2net'):
 elif(model_name=='u2netp'):
     net = U2NETP(3,1)
 
-text_encoder = CLIPTextModel.from_pretrained(
-    'runwayml/stable-diffusion-v1-5', 
-    subfolder="text_encoder", 
-    revision=None
-)
-text_encoder.requires_grad_(False)
-
 if torch.cuda.is_available():
     net.cuda()
-    text_encoder.cuda()
     
     # https://discuss.pytorch.org/t/do-dataparallel-and-distributeddataparallel-affect-the-batch-size-and-gpu-memory-consumption/97194
     net = nn.DataParallel(net, device_ids=list(range(ngpus)), dim=0)
-    text_encoder = nn.DataParallel(text_encoder, device_ids=list(range(ngpus)), dim=0)
     
 
 # ------- 4. define optimizer --------
@@ -181,7 +172,7 @@ running_loss = 0.0
 running_tar_loss = 0.0
 ite_num4val = 0
 save_frq = 20000 # save the model every 2000 iterations
-val_frq = 2000
+val_frq = 2
 
 for epoch in range(0, epoch_num):
     net.train()
@@ -210,10 +201,8 @@ for epoch in range(0, epoch_num):
         # y zero the parameter gradients
         optimizer.zero_grad()
         
-        tokens_emb = text_encoder(tokens)[0]
-
         # forward + backward + optimize
-        d0, d1, d2, d3, d4, d5, d6 = net(normals, tokens_emb)
+        d0, d1, d2, d3, d4, d5, d6 = net(normals, tokens)
         loss2, loss, descs = muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, albedos, speculs)
 
         loss.backward()
@@ -243,9 +232,7 @@ for epoch in range(0, epoch_num):
                     else:
                         inputs_test = Variable(inputs_test)
                         
-                    tokens_emb_test = text_encoder(tokens_test)[0]
-
-                    d1,d2,d3,d4,d5,d6,d7= net(inputs_test, tokens_emb_test)
+                    d1,d2,d3,d4,d5,d6,d7= net(inputs_test, tokens_test)
 
                     # normalization
                     pred = d1[0,...] # batch size is 1

@@ -1,6 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from transformers import CLIPTextModel, AutoTokenizer
 
 class REBNCONV(nn.Module):
     def __init__(self,in_ch=3,out_ch=3,dirate=1):
@@ -381,8 +382,18 @@ class U2NET(nn.Module):
         self.side6 = nn.Conv2d(512,out_ch,3,padding=1)
 
         self.outconv = nn.Conv2d(6*out_ch,out_ch,1)
+        
+        self.text_encoder = CLIPTextModel.from_pretrained(
+            'runwayml/stable-diffusion-v1-5', 
+            subfolder="text_encoder", 
+            revision=None
+        )
+        self.text_encoder.requires_grad_(False)
 
     def forward(self,x, c):
+        
+        # encode token
+        c = self.text_encoder(c)[0]
 
         hx = x
 
