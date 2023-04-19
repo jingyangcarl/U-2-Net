@@ -4,6 +4,10 @@ import torchvision
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
+import psutil
+
+p = psutil.Process(os.getpid())
+p.nice(0) # smaller ni value high priority
 
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -76,12 +80,6 @@ expname = 'test_models_28_normal2albedospec_masked_text_addalllayers_Linear_MSE'
 # expname = 'debug'
 model_name = 'u2net' #'u2netp'
 
-# data_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/*/'
-train_dir = '/home/jyang/projects/U-2-Net/data/v0/models_env_0/brdf/*/'
-tra_normal_dir = os.path.join('normal')
-tra_albedo_dir = os.path.join('albedo')
-tra_specul_dir = os.path.join('specular')
-
 exp_dir = os.path.join(os.getcwd(), 'logs', expname)
 os.makedirs(exp_dir, exist_ok=True)
 ngpus = torch.cuda.device_count()
@@ -92,20 +90,23 @@ batch_size_val = 1
 train_num = 0
 val_num = 0
 
+# train_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/*/'
+train_dir = '/home/jyang/projects/U-2-Net/data/v0/models_env_0/brdf/*/'
+tra_normal_dir = os.path.join('normal')
+tra_albedo_dir = os.path.join('albedo')
+tra_specul_dir = os.path.join('specular')
 # get all abs paths
 tra_normal_paths = glob.glob(os.path.join(train_dir, tra_normal_dir, '*.exr'))
 tra_albedo_paths = glob.glob(os.path.join(train_dir, tra_albedo_dir, '*.exr'))
 tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
+tra_mask_paths = [i.replace('normal', 'mask').replace('exr', 'png') for i in tra_normal_paths]
 # filter by views
 getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
-tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
-tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
-tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:2] # filter cams
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_mask_paths = [i for i in tra_mask_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
 tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
-# test
-test_normal_paths = tra_normal_paths
-test_tokens = tra_labels
-
 # tokenize text description
 tokenizer = AutoTokenizer.from_pretrained(
     'runwayml/stable-diffusion-v1-5',
@@ -121,6 +122,10 @@ tra_tokens = tokenizer(
     return_tensors="pt"
 )['input_ids'].numpy()
 
+# test
+test_normal_paths = tra_normal_paths
+test_tokens = tra_labels
+
 print("---")
 print("train images: ", len(tra_normal_paths))
 print("train labels: ", len(tra_albedo_paths))
@@ -130,6 +135,7 @@ salobj_dataset = LightStageDataset(
     normal_paths=tra_normal_paths,
     albedo_paths=tra_albedo_paths,
     specul_paths=tra_specul_paths,
+    mask_paths=tra_mask_paths,
     tokens = tra_tokens,
     transform=transforms.Compose([
         TextureRandomCrop(288),
@@ -141,6 +147,7 @@ test_salobj_dataset = LightStageDataset(
     normal_paths = tra_normal_paths[::7],
     albedo_paths = [],
     specul_paths= [],
+    mask_paths=[],
     tokens = tra_tokens[::7],
     transform=transforms.Compose([
         TextureNormalize(half=False),
@@ -148,7 +155,6 @@ test_salobj_dataset = LightStageDataset(
 test_salobj_dataloader = DataLoader(test_salobj_dataset, batch_size=1, shuffle=False, num_workers=3)
 
 # ------- 3. define model --------
-# define the net
 if(model_name=='u2net'):
     net = U2NET(3,4)
 elif(model_name=='u2netp'):
@@ -172,7 +178,7 @@ running_loss = 0.0
 running_tar_loss = 0.0
 ite_num4val = 0
 save_frq = 20000 # save the model every 2000 iterations
-val_frq = 2
+val_frq = 2000
 
 for epoch in range(0, epoch_num):
     net.train()

@@ -11,6 +11,7 @@ from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
 from PIL import Image
 from tqdm import tqdm
+from multiprocessing import Manager, Pool
 
 #==========================dataset load==========================
 class RescaleT(object):
@@ -326,22 +327,54 @@ class TextureNormalize(object):
 		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token, 'npath':npath}
 
 class LightStageDataset(Dataset):
-	def __init__(self,normal_paths,albedo_paths, specul_paths, tokens,transform=None):
+	def __init__(self,normal_paths,albedo_paths, specul_paths, mask_paths, tokens,transform=None):
 		self.normal_paths = normal_paths
 		self.albedo_paths = albedo_paths
 		self.specul_paths = specul_paths
+		self.mask_paths = mask_paths
 		self.tokens = tokens
 		self.transform = transform
   
-		# load
-		masks = [(io.imread(i.replace('albedo', 'mask').replace('exr', 'png'))/255.).astype(np.float16) for i in tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading mask')]
-		self.normals = [io.imread(p).astype(np.float16) for p in tqdm(self.normal_paths, dynamic_ncols=True, desc='loading normals')]
-		self.albedos = [io.imread(p).astype(np.float16) * masks[i][...,None] for i, p in enumerate(tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading albedos'))]
-		self.speculs = [io.imread(p).astype(np.float16) * masks[i] for i, p in enumerate(tqdm(self.specul_paths, dynamic_ncols=True, desc='loading speculars'))]
+		self.masks = self.multiprocess_imread(mask_paths, 'loading masks')
+		self.normals = self.multiprocess_imread(normal_paths, 'loading normals')
+		self.albedos = self.multiprocess_imread(albedo_paths, 'loading albedos', masking=True)
+		self.speculs = self.multiprocess_imread(specul_paths, 'loading speculars', masking=True)
 		print('loading completed')
+  
+		# masking
+		# self.albedos = [x.astype(np.float32) * self.masks[i][...,None] for i, x in enumerate(tqdm(self.albedos, dynamic_ncols=True, desc='masking albedos'))]
+		# self.speculs = [x.astype(np.float32) * self.masks[i] for i, x in enumerate(tqdm(self.speculs, dynamic_ncols=True, desc='masking speculars'))]
+  
+		# exit()
+		# masks = [(io.imread(i.replace('albedo', 'mask').replace('exr', 'png'))/255.).astype(np.float16) for i in tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading mask')]
+		# self.normals = [io.imread(p).astype(np.float32) for p in tqdm(self.normal_paths, dynamic_ncols=True, desc='loading normals')]
+		# self.albedos = [io.imread(p).astype(np.float32) * masks[i][...,None] for i, p in enumerate(tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading albedos'))]
+		# self.speculs = [io.imread(p).astype(np.float32) * masks[i] for i, p in enumerate(tqdm(self.specul_paths, dynamic_ncols=True, desc='loading speculars'))]
+		# print('loading completed')
 
 	def __len__(self):
 		return len(self.normal_paths) * (100 if self.albedo_paths else 1) # test set has empty albedo
+
+	def singleprocess_imread(self, i, path, masking, buff):
+		img = io.imread(path)
+		img = img/255. if '.png' in path else img
+		if masking:
+			img = img * (self.masks[i] if img.ndim==2 else self.masks[i][...,None])
+		buff.append(img)
+
+	def multiprocess_imread(self, paths, desc='', masking=False):
+    	#  https://stackoverflow.com/questions/41920124/multiprocessing-use-tqdm-to-display-a-progress-bar
+		pbar = tqdm(total=len(paths), desc=desc)
+		def update(*a):
+			pbar.update()
+   
+		buff = Manager().list()
+		pool = Pool(processes=6)
+		for i, p in enumerate(paths):
+			pool.apply_async(self.singleprocess_imread, args=(i, p, masking, buff), callback=update)
+		pool.close()
+		pool.join()
+		return buff
 
 	def __getitem__(self,idx):
 
