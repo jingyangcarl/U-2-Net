@@ -335,19 +335,20 @@ class LightStageDataset(Dataset):
   
 		self.masks = self.multiprocess_imread(mask_paths, 'loading masks')
 		self.normals = self.multiprocess_imread(normal_paths, 'loading normals')
-		self.albedos = self.multiprocess_imread(albedo_paths, 'loading albedos', masking=True)
-		self.speculs = self.multiprocess_imread(specul_paths, 'loading speculars', masking=True)
+		self.albedos = self.multiprocess_imread(albedo_paths, 'loading albedos', masking=False)
+		self.speculs = self.multiprocess_imread(specul_paths, 'loading speculars', masking=False)
+		print('multiprocess loading completed')
   
 		# need to convert to np array, otherwise, it would be super slow fetching 
 		# and this step is somehow needs to be places after all the images are loaded, otherwide the multiprocessing loading will be slow down a lot
-		self.masks = np.array(self.masks, dtype=np.float16)
-		self.normals = np.array(self.normals, dtype=np.float16)
-		self.albedos = np.array(self.albedos, dtype=np.float16)
-		self.speculs = np.array(self.speculs, dtype=np.float16)
-		print('loading completed')
+		self.masks = np.array([self.masks[i] for i in tqdm(self.mask_paths, desc='sorting masks')], dtype=np.float16)
+		self.normals = np.array([self.normals[i] for i in tqdm(self.normal_paths, desc='sorting normals')], dtype=np.float16)
+		self.albedos = np.array([self.albedos[i] for i in tqdm(self.albedo_paths, desc='sorting albedos')], dtype=np.float16)
+		self.speculs = np.array([self.speculs[i] for i in tqdm(self.specul_paths, desc='sorting speculars')], dtype=np.float16)
+		print('sorting completed')
 
 	def __len__(self):
-		return len(self.normal_paths) * (100 if self.albedo_paths else 1) # test set has empty albedo
+		return len(self.normal_paths) * (100 if self.specul_paths else 1) # test set has empty albedo
 
 	def singleprocess_imread(self, i, path, masking, buff):
 		img = io.imread(path)
@@ -355,7 +356,7 @@ class LightStageDataset(Dataset):
 		img = img.astype(np.float16)
 		if masking:
 			img = img * (self.masks[i] if img.ndim==2 else self.masks[i][...,None])
-		buff.append(img)
+		buff[path] = img
 
 	def multiprocess_imread(self, paths, desc='', masking=False):
 		#  https://stackoverflow.com/questions/41920124/multiprocessing-use-tqdm-to-display-a-progress-bar
@@ -363,8 +364,8 @@ class LightStageDataset(Dataset):
 		def update(*a):
 			pbar.update()
    
-		buff = Manager().list()
-		pool = Pool(processes=6)
+		buff = Manager().dict()
+		pool = Pool(processes=10)
 		for i, p in enumerate(paths):
 			pool.apply_async(self.singleprocess_imread, args=(i, p, masking, buff), callback=update)
 		pool.close()

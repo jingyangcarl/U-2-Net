@@ -141,7 +141,7 @@ salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuf
 
 test_salobj_dataset = LightStageDataset(
     normal_paths = tra_normal_paths[::7],
-    albedo_paths = [],
+    albedo_paths = tra_albedo_paths[::7],
     specul_paths= [],
     mask_paths=[],
     tokens = tra_tokens[::7],
@@ -246,12 +246,18 @@ for epoch in range(0, epoch_num):
                     pred = d1[0,...] # batch size is 1
                     pred = normPRED(pred)
                     pred = pred.cpu().data.numpy().transpose((1, 2, 0))
+                    out_raws = albedos_test[0].cpu().data.numpy().transpose((1, 2, 0))
+                    out_norm = normals_test[0].cpu().data.numpy().transpose((1, 2, 0))
                     
                     # save results to test_results folder
                     obj, _, cam = os.path.splitext(npath_test[0])[0].split('/')[-3:]
+                    save_path_raw = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_r.png')
+                    save_path_normal = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_n.png')
                     save_path_albedo = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_a.png')
                     save_path_specul = os.path.join(exp_dir, 'val', f'{ite_num}', f'{obj}_{cam}_s.png')
                     os.makedirs(os.path.dirname(save_path_albedo), exist_ok=True)
+                    imageio.imwrite(save_path_raw, (out_raws[::4,::4,:] * 255.).astype(np.uint8))
+                    imageio.imwrite(save_path_normal, (out_norm[::4,::4,:] * 255.).astype(np.uint8))
                     imageio.imwrite(save_path_albedo, (pred[...,:3] * 255.).astype(np.uint8))
                     imageio.imwrite(save_path_specul, (pred[...,-1] * 255.).astype(np.uint8))
 
