@@ -98,10 +98,10 @@ tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
 tra_mask_paths = [i.replace('normal', 'mask').replace('exr', 'png') for i in tra_normal_paths]
 # filter by views
 getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
-tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
-tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
-tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
-tra_mask_paths = [i for i in tra_mask_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_mask_paths = [i for i in tra_mask_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
 tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
 # tokenize text description
 tokenizer = AutoTokenizer.from_pretrained(

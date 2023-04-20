@@ -339,10 +339,11 @@ class LightStageDataset(Dataset):
 		self.speculs = self.multiprocess_imread(specul_paths, 'loading speculars', masking=True)
   
 		# need to convert to np array, otherwise, it would be super slow fetching 
-		self.masks = np.array(self.masks)
-		self.normals = np.array(self.normals)
-		self.albedos = np.array(self.albedos)
-		self.speculs = np.array(self.speculs)
+		# and this step is somehow needs to be places after all the images are loaded, otherwide the multiprocessing loading will be slow down a lot
+		self.masks = np.array(self.masks, dtype=np.float16)
+		self.normals = np.array(self.normals, dtype=np.float16)
+		self.albedos = np.array(self.albedos, dtype=np.float16)
+		self.speculs = np.array(self.speculs, dtype=np.float16)
 		print('loading completed')
 
 	def __len__(self):
