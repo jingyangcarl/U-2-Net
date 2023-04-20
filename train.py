@@ -4,10 +4,6 @@ import torchvision
 from torch.autograd import Variable
 import torch.nn as nn
 import torch.nn.functional as F
-import psutil
-
-p = psutil.Process(os.getpid())
-p.nice(0) # smaller ni value high priority
 
 from torch.utils.data import Dataset, DataLoader
 from torchvision import transforms, utils
@@ -76,7 +72,7 @@ def normPRED(d):
 
 # ------- 2. set the directory of training dataset --------
 
-expname = 'test_models_28_normal2albedospec_masked_text_addalllayers_Linear_MSE'
+expname = 'test_models_28_normalalbedo2albedospec_masked'
 # expname = 'debug'
 model_name = 'u2net' #'u2netp'
 
@@ -91,7 +87,7 @@ train_num = 0
 val_num = 0
 
 # train_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0.4/pine_env_0/brdf/*/'
-train_dir = '/home/jyang/projects/U-2-Net/data/v0/models_env_0/brdf/*/'
+train_dir = '/home/ICT2000/jyang/projects/ObjectReal/data/v0/models_env_0/brdf/*/'
 tra_normal_dir = os.path.join('normal')
 tra_albedo_dir = os.path.join('albedo')
 tra_specul_dir = os.path.join('specular')
@@ -102,10 +98,10 @@ tra_specul_paths = glob.glob(os.path.join(train_dir, tra_specul_dir, '*.exr'))
 tra_mask_paths = [i.replace('normal', 'mask').replace('exr', 'png') for i in tra_normal_paths]
 # filter by views
 getcamid = lambda x: int(os.path.splitext(x)[0].split('/')[-1].replace('cam', ''))
-tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
-tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
-tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
-tra_mask_paths = [i for i in tra_mask_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:] # filter cams
+tra_normal_paths = [i for i in tra_normal_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
+tra_albedo_paths = [i for i in tra_albedo_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
+tra_specul_paths = [i for i in tra_specul_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
+tra_mask_paths = [i for i in tra_mask_paths if (getcamid(i) <= 16 and getcamid(i) != 13)][:25] # filter cams
 tra_labels = [os.path.splitext(i)[0].split('/')[-3] for i in tra_normal_paths]
 # tokenize text description
 tokenizer = AutoTokenizer.from_pretrained(
@@ -141,7 +137,7 @@ salobj_dataset = LightStageDataset(
         TextureRandomCrop(288),
         TextureNormalize(),
     ]))
-salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuffle=True, num_workers=3)
+salobj_dataloader = DataLoader(salobj_dataset, batch_size=batch_size_train, shuffle=True, num_workers=16)
 
 test_salobj_dataset = LightStageDataset(
     normal_paths = tra_normal_paths[::7],
@@ -156,7 +152,7 @@ test_salobj_dataloader = DataLoader(test_salobj_dataset, batch_size=1, shuffle=F
 
 # ------- 3. define model --------
 if(model_name=='u2net'):
-    net = U2NET(3,4)
+    net = U2NET(6,4)
 elif(model_name=='u2netp'):
     net = U2NETP(3,1)
 
@@ -207,8 +203,11 @@ for epoch in range(0, epoch_num):
         # y zero the parameter gradients
         optimizer.zero_grad()
         
+        # hack
+        inputs = torch.cat((normals, albedos**(1/2.2)), dim=1)
+        
         # forward + backward + optimize
-        d0, d1, d2, d3, d4, d5, d6 = net(normals, tokens)
+        d0, d1, d2, d3, d4, d5, d6 = net(inputs, tokens)
         loss2, loss, descs = muti_bce_loss_fusion(d0, d1, d2, d3, d4, d5, d6, albedos, speculs)
 
         loss.backward()
@@ -229,14 +228,17 @@ for epoch in range(0, epoch_num):
             with torch.no_grad():
                 for i_test, data_test in enumerate(tqdm(test_salobj_dataloader, desc='testing', dynamic_ncols=True)):
 
-                    inputs_test, tokens_test, npath_test = data_test['normal'], data_test['token'], data_test['npath']
-                    inputs_test = inputs_test.type(torch.FloatTensor)
+                    normals_test, albedos_test, tokens_test, npath_test = data_test['normal'], data_test['albedo'], data_test['token'], data_test['npath']
+                    normals_test = normals_test.type(torch.FloatTensor)
 
                     if torch.cuda.is_available():
-                        inputs_test = Variable(inputs_test.cuda())
+                        normals_test = Variable(normals_test.cuda())
+                        albedos_test = Variable(albedos_test.cuda())
                         tokens_test = Variable(tokens_test.cuda())
                     else:
-                        inputs_test = Variable(inputs_test)
+                        normals_test = Variable(normals_test)
+
+                    inputs_test = torch.cat((normals_test, albedos_test**(1/2.2)), dim=1)
                         
                     d1,d2,d3,d4,d5,d6,d7= net(inputs_test, tokens_test)
 

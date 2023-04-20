@@ -269,7 +269,7 @@ class SalObjDataset(Dataset):
 		return sample
 
 class TextureRandomCrop(object):
-    
+	
 	def __init__(self,output_size):
 		assert isinstance(output_size, (int, tuple))
 		if isinstance(output_size, int):
@@ -279,8 +279,7 @@ class TextureRandomCrop(object):
 			self.output_size = output_size
    
 	def __call__(self,sample):
-		imidx, normal, albedo, specul, token, npath = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token'], sample['npath']
-
+		normal, albedo, specul = sample['normal'], sample['albedo'], sample['specul']
 		if random.random() >= 0.5:
 			normal = normal[::-1]
 			albedo = albedo[::-1]
@@ -296,7 +295,7 @@ class TextureRandomCrop(object):
 		albedo = albedo[top: top + new_h, left: left + new_w]
 		specul = specul[top: top + new_h, left: left + new_w]
 
-		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token, 'npath':npath}
+		return {'normal':normal, 'albedo':albedo, 'specul':specul}
 
 class TextureNormalize(object):
 
@@ -304,7 +303,7 @@ class TextureNormalize(object):
 		self.half = half
  
 	def __call__(self,sample):
-		imidx, normal, albedo, specul, token, npath = sample['imidx'], sample['normal'], sample['albedo'], sample['specul'], sample['token'], sample['npath']
+		normal, albedo, specul = sample['normal'], sample['albedo'], sample['specul']
   
 		if self.half:
 			normal = normal[::2,::2,:]
@@ -322,9 +321,8 @@ class TextureNormalize(object):
 		normal = normal.transpose((2, 0, 1))
 		albedo = albedo.transpose((2, 0, 1))
 		specul = specul.transpose((2, 0, 1))
-		imidx, normal, albedo, specul, token = torch.from_numpy(imidx), torch.from_numpy(normal.copy()), torch.from_numpy(albedo.copy()), torch.from_numpy(specul.copy()), torch.from_numpy(token.copy())
   
-		return {'imidx':imidx,'normal':normal, 'albedo':albedo, 'specul':specul, 'token': token, 'npath':npath}
+		return {'normal':normal, 'albedo':albedo, 'specul':specul}
 
 class LightStageDataset(Dataset):
 	def __init__(self,normal_paths,albedo_paths, specul_paths, mask_paths, tokens,transform=None):
@@ -339,18 +337,13 @@ class LightStageDataset(Dataset):
 		self.normals = self.multiprocess_imread(normal_paths, 'loading normals')
 		self.albedos = self.multiprocess_imread(albedo_paths, 'loading albedos', masking=True)
 		self.speculs = self.multiprocess_imread(specul_paths, 'loading speculars', masking=True)
+  
+		# need to convert to np array, otherwise, it would be super slow fetching 
+		self.masks = np.array(self.masks)
+		self.normals = np.array(self.normals)
+		self.albedos = np.array(self.albedos)
+		self.speculs = np.array(self.speculs)
 		print('loading completed')
-  
-		# masking
-		# self.albedos = [x.astype(np.float32) * self.masks[i][...,None] for i, x in enumerate(tqdm(self.albedos, dynamic_ncols=True, desc='masking albedos'))]
-		# self.speculs = [x.astype(np.float32) * self.masks[i] for i, x in enumerate(tqdm(self.speculs, dynamic_ncols=True, desc='masking speculars'))]
-  
-		# exit()
-		# masks = [(io.imread(i.replace('albedo', 'mask').replace('exr', 'png'))/255.).astype(np.float16) for i in tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading mask')]
-		# self.normals = [io.imread(p).astype(np.float32) for p in tqdm(self.normal_paths, dynamic_ncols=True, desc='loading normals')]
-		# self.albedos = [io.imread(p).astype(np.float32) * masks[i][...,None] for i, p in enumerate(tqdm(self.albedo_paths, dynamic_ncols=True, desc='loading albedos'))]
-		# self.speculs = [io.imread(p).astype(np.float32) * masks[i] for i, p in enumerate(tqdm(self.specul_paths, dynamic_ncols=True, desc='loading speculars'))]
-		# print('loading completed')
 
 	def __len__(self):
 		return len(self.normal_paths) * (100 if self.albedo_paths else 1) # test set has empty albedo
@@ -358,12 +351,13 @@ class LightStageDataset(Dataset):
 	def singleprocess_imread(self, i, path, masking, buff):
 		img = io.imread(path)
 		img = img/255. if '.png' in path else img
+		img = img.astype(np.float16)
 		if masking:
 			img = img * (self.masks[i] if img.ndim==2 else self.masks[i][...,None])
 		buff.append(img)
 
 	def multiprocess_imread(self, paths, desc='', masking=False):
-    	#  https://stackoverflow.com/questions/41920124/multiprocessing-use-tqdm-to-display-a-progress-bar
+		#  https://stackoverflow.com/questions/41920124/multiprocessing-use-tqdm-to-display-a-progress-bar
 		pbar = tqdm(total=len(paths), desc=desc)
 		def update(*a):
 			pbar.update()
@@ -380,16 +374,16 @@ class LightStageDataset(Dataset):
 
 		idx = idx % len(self.normal_paths)
 		imidx = np.array([idx])
-		normal = self.normals[idx]
 		token = self.tokens[idx]
 		npath = self.normal_paths[idx]
+		normal = self.normals[idx]
   
-		if self.albedos: 
+		if self.albedos.size != 0: 
 			albedo = self.albedos[idx]
 		else:
 			albedo = np.zeros_like(normal)
    
-		if self.speculs: 
+		if self.speculs.size != 0: 
 			specul = self.speculs[idx]
 		else:
 			specul = np.zeros_like(normal)
@@ -397,9 +391,16 @@ class LightStageDataset(Dataset):
 		albedo = albedo[..., None] if albedo.ndim == 2 else albedo
 		specul = specul[..., None] if specul.ndim == 2 else specul
 
-		sample = {'imidx':imidx, 'normal':normal, 'albedo':albedo, 'specul':specul, 'token':token, 'npath':npath}
+		sample = {'normal':normal, 'albedo':albedo, 'specul':specul}
 
 		if self.transform:
 			sample = self.transform(sample)
 
-		return sample
+		return {
+			'imidx': imidx, 
+			'token': token, 
+			'npath': npath, 
+			'normal': sample['normal'], 
+			'albedo': sample['albedo'], 
+			'specul': sample['specul']
+		}

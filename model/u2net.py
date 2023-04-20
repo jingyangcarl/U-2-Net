@@ -335,22 +335,22 @@ class U2NET(nn.Module):
     def __init__(self,in_ch=3,out_ch=1):
         super(U2NET,self).__init__()
 
-        self.stage1 = RSU7(in_ch*2,32,64)
+        self.stage1 = RSU7(in_ch+3,32,64)
         self.pool12 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
-        self.stage2 = RSU6(64*2,32,128)
+        self.stage2 = RSU6(64+3,32,128)
         self.pool23 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
-        self.stage3 = RSU5(128*2,64,256)
+        self.stage3 = RSU5(128+3,64,256)
         self.pool34 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
-        self.stage4 = RSU4(256*2,128,512)
+        self.stage4 = RSU4(256+3,128,512)
         self.pool45 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
-        self.stage5 = RSU4F(512*2,256,512)
+        self.stage5 = RSU4F(512+3,256,512)
         self.pool56 = nn.MaxPool2d(2,stride=2,ceil_mode=True)
 
-        self.stage6 = RSU4F(512*2,256,512)
+        self.stage6 = RSU4F(512+3,256,512)
         
         # self.clayer = lambda in_dim, out_dim: nn.Sequential(
         #     nn.Linear(in_dim, out_dim),
@@ -368,10 +368,10 @@ class U2NET(nn.Module):
         ).cuda()
 
         # decoder
-        self.stage5d = RSU4F(1024+512,256,512)
-        self.stage4d = RSU4(1024+256,128,256)
-        self.stage3d = RSU5(512+128,64,128)
-        self.stage2d = RSU6(256+64,32,64)
+        self.stage5d = RSU4F(1024+3,256,512)
+        self.stage4d = RSU4(1024+3,128,256)
+        self.stage3d = RSU5(512+3,64,128)
+        self.stage2d = RSU6(256+3,32,64)
         self.stage1d = RSU7(128+3,16,64)
 
         self.side1 = nn.Conv2d(64,out_ch,3,padding=1)
@@ -394,36 +394,36 @@ class U2NET(nn.Module):
         
         # encode token
         c = self.text_encoder(c)[0]
-
+        c_nn = self.clayer(59136, 3)(c)[:,:,None,None]
         hx = x
 
         #stage 1
-        c1 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c1 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx1 = self.stage1(torch.cat((hx, c1), 1))
         hx = self.pool12(hx1)
 
         #stage 2
-        c2 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c2 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx2 = self.stage2(torch.cat((hx, c2), 1))
         hx = self.pool23(hx2)
 
         #stage 3
-        c3 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c3 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx3 = self.stage3(torch.cat((hx, c3), 1))
         hx = self.pool34(hx3)
 
         #stage 4
-        c4 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c4 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx4 = self.stage4(torch.cat((hx, c4), 1))
         hx = self.pool45(hx4)
 
         #stage 5
-        c5 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c5 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx5 = self.stage5(torch.cat((hx, c5), 1))
         hx = self.pool56(hx5)
 
         #stage 6
-        c6 = self.clayer(59136, hx.shape[1])(c)[:,:,None,None] * torch.ones_like(hx).cuda()
+        c6 = c_nn * torch.ones_like(hx[:,:3,:,:]).cuda()
         hx6 = self.stage6(torch.cat((hx, c6), 1))
         hx6up = _upsample_like(hx6,hx5)
 
